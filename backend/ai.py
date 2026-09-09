@@ -32,6 +32,28 @@ SYSTEM_PROMPT = """你是程序设计训练课程的出题教师。根据用户�
 如果参考已有题，按本次用户要求修改并保留题目 id。"""
 
 
+def extract_json_object(text):
+    """Extract the first complete JSON object from a model response."""
+    cleaned = text.strip()
+    if cleaned.startswith("```"):
+        cleaned = cleaned.split("\n", 1)[1] if "\n" in cleaned else cleaned[3:]
+        if "```" in cleaned:
+            cleaned = cleaned.rsplit("```", 1)[0].strip()
+    decoder = json.JSONDecoder()
+    for index, character in enumerate(cleaned):
+        if character != "{":
+            continue
+        try:
+            value, end = decoder.raw_decode(cleaned[index:])
+        except json.JSONDecodeError:
+            continue
+        if isinstance(value, dict) and not cleaned[index + end:].strip():
+            return json.dumps(value, ensure_ascii=False)
+        if isinstance(value, dict):
+            return json.dumps(value, ensure_ascii=False)
+    raise ValueError("返回内容不包含完整 JSON 对象")
+
+
 class AIService:
     def __init__(self, store, judge, testing=False, transport=None):
         self.store, self.judge = store, judge
@@ -95,7 +117,16 @@ class AIService:
             if not problem:
                 raise HTTPException(404, "参考题目不存在")
         async with self.store.lock:
-            if any(t["user_id"] == user["user_id"] and t["status"] in {"pending", "running"} for t in await self.store.all("ai_tasks")):
+            active = []
+            for task in await self.store.all("ai_tasks"):
+                if task["user_id"] != user["user_id"] or task["status"] not in {"pending", "running"}:
+                    continue
+                if task["task_id"] in self.tasks and not self.tasks[task["task_id"]].done():
+                    active.append(task)
+                else:
+                    task.update(status="error", progress="任务句柄已失效，请重新发起。", result=None)
+                    await self.store.put("ai_tasks", task["task_id"], task)
+            if active:
                 raise HTTPException(409, "已有命题任务正在执行")
             tid = uuid.uuid4().hex
             row = {"task_id": tid, "user_id": user["user_id"], "status": "pending", "progress": "等待开始",
@@ -158,7 +189,8 @@ class AIService:
             async with httpx.AsyncClient(transport=self.transport, timeout=httpx.Timeout(90, connect=15), follow_redirects=False, trust_env=False) as client:
                 async with client.stream("POST", config["provider_url"] + "/chat/completions",
                     headers={"Authorization": f"Bearer {key}"}, json={"model": config["model"], "messages": messages,
-                        "stream": True, "stream_options": {"include_usage": True}}) as stream:
+                        "stream": True, "stream_options": {"include_usage": True},
+                        "thinking": {"type": "disabled"}}) as stream:
                     stream.raise_for_status()
                     if "text/event-stream" not in stream.headers.get("content-type", ""):
                         raise ValueError("模型提供商未返回流式响应")
@@ -174,19 +206,26 @@ class AIService:
                         if chunk.get("usage"):
                             reported = chunk["usage"]
                         for choice in chunk.get("choices", []):
-                            delta = choice.get("delta", {}).get("content")
-                            if isinstance(delta, str):
-                                output += delta
+                            delta = choice.get("delta", {})
+                            content = delta.get("content")
+                            if isinstance(content, str):
+                                output += content
+                            reasoning = delta.get("reasoning_content")
+                            if isinstance(reasoning, str) and reasoning:
+                                task["reasoning_chars"] = task.get("reasoning_chars", 0) + len(reasoning)
                         if len(output) > 1_000_000:
                             raise ValueError("模型输出过大")
                         self.account(task, config, base, prompt, output, reported)
                         if time.monotonic() - updated > 0.25:
-                            task["progress"] = f"正在生成题面与测试数据 · 已接收 {len(output):,} 字符"
+                            reasoning_chars = task.get("reasoning_chars", 0)
+                            task["progress"] = f"正在生成题面与测试数据 · 已接收 {len(output):,} 字符" + (f" · 思考 {reasoning_chars:,} 字符" if reasoning_chars else "")
                             await self.persist(task)
                             updated = time.monotonic()
         finally:
             self.account(task, config, base, prompt, output, reported)
             await self.persist(task)
+        if not output.strip():
+            raise ValueError("模型未返回可解析的题目正文，请确认模型名称和 Chat Completions 流式接口配置正确")
         # A malicious upstream should not be able to echo the secret into a saved draft.
         if key and key in output:
             raise ValueError("模型输出包含敏感配置")
@@ -224,6 +263,9 @@ class AIService:
         except (asyncio.TimeoutError, httpx.TimeoutException):
             task.update(status="error", progress="命题任务超时，请简化要求或检查模型服务。")
             await self.persist(task)
+        except ValueError as error:
+            task.update(status="error", progress=f"模型响应无法使用：{error}")
+            await self.persist(task)
         except Exception:
             task.update(status="error", progress="未能生成通过校验的题目，请检查模型配置、执行器或调整命题要求。")
             await self.persist(task)
@@ -237,18 +279,15 @@ class AIService:
         messages = [{"role": "system", "content": SYSTEM_PROMPT}, {"role": "user", "content": content}]
         for attempt in range(2):
             output = await self.completion(task, config, messages)
-            text = output.strip()
-            if text.startswith("```"):
-                text = text.split("\n", 1)[1].rsplit("```", 1)[0].strip()
             error = None
             try:
-                draft = AIDraft.model_validate_json(text)
+                draft = AIDraft.model_validate_json(extract_json_object(output))
                 if existing and draft.problem.id != existing["id"]:
                     error = "修改已有题目必须保留原 id"
                 else:
                     error = await self.validate_draft(task, draft)
-            except (ValueError, TypeError):
-                error = "返回内容不符合所要求的完整 JSON 结构或字段约束"
+            except (ValueError, TypeError) as exc:
+                error = f"返回内容不符合所要求的完整 JSON 结构或字段约束：{exc}"
             if not error:
                 result = draft.model_dump()
                 result["validation"] = {"reference_passed": True, "unique_testcases": len(set(c.input for c in draft.problem.testcases)),
