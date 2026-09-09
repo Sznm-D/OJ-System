@@ -1,0 +1,58 @@
+{
+  "id": "P1001",
+  "title": "两数之和",
+  "description": "输入两个整数 a 和 b，输出它们的和。",
+  "input_description": "一行，两个空格分隔的整数 a、b。",
+  "output_description": "输出一个整数，表示 a+b。",
+  "constraints": "|a|, |b| ≤ 10^9",
+  "tags": [
+    "基础语法",
+    "整数运算"
+  ],
+  "samples": [
+    {
+      "input": "1 2\n",
+      "output": "3\n"
+    }
+  ],
+  "testcases": [
+    {
+      "input": "1 2\n",
+      "output": "3\n"
+    },
+    {
+      "input": "0 0\n",
+      "output": "0\n"
+    },
+    {
+      "input": "-5 3\n",
+      "output": "-2\n"
+    },
+    {
+      "input": "1000000000 1000000000\n",
+      "output": "2000000000\n"
+    },
+    {
+      "input": "-1000000000 -1000000000\n",
+      "output": "-2000000000\n"
+    },
+    {
+      "input": "-8 8\n",
+      "output": "0\n"
+    },
+    {
+      "input": "7 11\n",
+      "output": "18\n"
+    },
+    {
+      "input": "23 -50\n",
+      "output": "-27\n"
+    }
+  ],
+  "time_limit": 2,
+  "memory_limit": 128,
+  "difficulty": "入门",
+  "hint": "",
+  "source": "课程实验自编样题",
+  "author": "知行 OJ"
+}
