@@ -103,6 +103,8 @@ def create_app(data_dir=None, testing=False, runner=None, ai_transport=None):
 
     app = FastAPI(title="知行 OJ · 课程实验", version="1.0.0", lifespan=lifespan)
     app.state.store, app.state.judge = store, judge
+    from .browser_sessions import install_browser_sessions
+    install_browser_sessions(app, store, response)
 
     @app.exception_handler(StarletteHTTPException)
     async def http_error(request, exc):

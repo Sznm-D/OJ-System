@@ -174,7 +174,7 @@ class Runner:
                 "memory": round(peak, 2) if self.mode == "local" else None,
                 "stdout": stdout, "stderr": stderr[:4000], "exit_code": process.returncode}
 
-    async def judge(self, problem, language, code, on_case=None):
+    async def judge(self, problem, language, code, on_case=None, capture_output=False):
         seconds = problem.get("time_limit") or language.get("time_limit") or 3
         memory = problem.get("memory_limit") or language.get("memory_limit") or 128
         result = {"status": "success", "score": 0, "counts": len(problem["testcases"]) * 10,
@@ -200,6 +200,8 @@ class Runner:
                 result["score"] += 10 if verdict == "AC" else 0
                 result["details"].append({"id": i + 1, "result": verdict, "time": outcome["time"],
                                           "memory": outcome["memory"], "message": outcome["stderr"]})
+                if capture_output:
+                    result["details"][-1]["stdout"] = outcome["stdout"]
                 if on_case:
                     await on_case(i + 1, len(problem["testcases"]))
             failed = next((case["result"] for case in result["details"] if case["result"] != "AC"), None)

@@ -130,6 +130,7 @@ class AIRequest(Model):
 
 class AIDraft(Model):
     problem: Problem
+    reference_language: Literal["python", "cpp"] = "python"
     reference_solution: str = Field(min_length=1, max_length=100000)
     coverage: list[str] = Field(min_length=1, max_length=100)
     explanation: str = Field(min_length=1, max_length=10000)

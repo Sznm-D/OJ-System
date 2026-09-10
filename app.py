@@ -2,12 +2,14 @@
 import html
 import json
 import os
+import uuid
 
 import httpx
 import streamlit as st
 from pydantic import ValidationError
 
 from backend.models import Problem
+from frontend_session import sync_browser_cookie
 
 st.set_page_config(page_title="知行 OJ", page_icon="📘", layout="wide", initial_sidebar_state="expanded")
 st.markdown("""<style>
@@ -135,6 +137,131 @@ input::placeholder, textarea::placeholder {color: rgba(255, 255, 255, .78) !impo
 [data-testid="stSidebar"] [data-testid="stButton"] > button {display: flex; min-height: 2.72rem; align-items: center; justify-content: flex-start; width: 100%; margin: 0; padding: .72rem .85rem; border: 1px solid #1a3470; border-radius: 4px; background: rgba(4, 18, 58, .52); color: #4fc9ef; font-family: 'Noto Sans SC', sans-serif; font-size: .93rem; font-weight: 500; letter-spacing: .08em; line-height: 1.25; box-shadow: none; transform: skewX(-5deg); transition: color .15s ease, background .15s ease, border-color .15s ease, box-shadow .15s ease, padding-left .15s ease;}
 [data-testid="stSidebar"] [data-testid="stButton"] > button:hover {background: rgba(0, 51, 255, .34); border-color: #00ccff; color: #fff; padding-left: 1.05rem; box-shadow: 0 0 12px rgba(0, 102, 255, .2);}
 [data-testid="stSidebar"] [data-testid="stButton"] > button[kind="primary"] {background: #ff0033; border-color: #ff0033; color: #fff; font-weight: 700; box-shadow: 5px 5px 0 #ff6bb4;}
+/* Keep the submission language readable on its light control and popup. */
+.st-key-submission_language [data-baseweb="select"] > div {background: #fff !important;}
+.st-key-submission_language .react-aria-ComboBox [role="group"],
+.st-key-submission_language .react-aria-ComboBox input {background: #fff !important;}
+.st-key-submission_language .react-aria-ComboBox *,
+.st-key-submission_language [data-baseweb="select"],
+.st-key-submission_language [data-baseweb="select"] * {color: #000 !important; -webkit-text-fill-color: #000 !important;}
+[role="listbox"][aria-label="语言"],
+[role="listbox"][aria-label="语言"] [role="option"],
+[data-baseweb="popover"] [role="listbox"],
+[data-baseweb="popover"] [role="option"] {background: #fff !important;}
+[role="listbox"][aria-label="语言"],
+[role="listbox"][aria-label="语言"] *,
+[data-baseweb="popover"] [role="listbox"],
+[data-baseweb="popover"] [role="listbox"] * {color: #000 !important; -webkit-text-fill-color: #000 !important;}
+[role="listbox"][aria-label="语言"] [role="option"]:hover,
+[role="listbox"][aria-label="语言"] [role="option"][data-focused="true"],
+[role="listbox"][aria-label="语言"] [role="option"][aria-selected="true"],
+[data-baseweb="popover"] [role="option"]:hover,
+[data-baseweb="popover"] [role="option"][aria-selected="true"] {background: #e7eef8 !important;}
+
+/* Readable white controls: submission filter/status, detail picker, editor picker. */
+.st-key-submission_status [data-baseweb="select"] > div,
+.st-key-submission_detail [data-baseweb="select"] > div,
+.st-key-edit_problem [data-baseweb="select"] > div {background: #fff !important;}
+.st-key-submission_status .react-aria-ComboBox [role="group"],
+.st-key-submission_status .react-aria-ComboBox input,
+.st-key-submission_detail .react-aria-ComboBox [role="group"],
+.st-key-submission_detail .react-aria-ComboBox input,
+.st-key-edit_problem .react-aria-ComboBox [role="group"],
+.st-key-edit_problem .react-aria-ComboBox input {background: #fff !important;}
+.st-key-submission_status .react-aria-ComboBox *,
+.st-key-submission_status [data-baseweb="select"],
+.st-key-submission_status [data-baseweb="select"] *,
+.st-key-submission_detail .react-aria-ComboBox *,
+.st-key-submission_detail [data-baseweb="select"],
+.st-key-submission_detail [data-baseweb="select"] *,
+.st-key-edit_problem .react-aria-ComboBox *,
+.st-key-edit_problem [data-baseweb="select"],
+.st-key-edit_problem [data-baseweb="select"] * {color: #000 !important; -webkit-text-fill-color: #000 !important;}
+
+/* The visibility form's secondary submit button defaults to white-on-white. */
+.st-key-log_visibility_submit button {background: #fff !important; color: #000 !important; -webkit-text-fill-color: #000 !important; border-color: #1a3470 !important;}
+.st-key-log_visibility_submit button:hover {background: #e7eef8 !important; color: #000 !important;}
+
+/* Scope white statement text to the problem, including Markdown and samples. */
+.st-key-problem_statement, .st-key-problem_statement * {color: #fff !important; -webkit-text-fill-color: #fff !important;}
+.st-key-problem_statement pre, .st-key-problem_statement code,
+.st-key-problem_statement [data-testid="stCode"] {background: #04123a !important;}
+/* Shared contrast rules: dark page text stays white, light controls stay black. */
+.stApp :is(h1, h2, h3, h4, h5, h6, p, label, li, a, small, summary),
+.stApp :is([data-testid="stCaptionContainer"], [data-testid="stMetricLabel"],
+           [data-testid="stMetricValue"], [data-testid="stMarkdownContainer"],
+           [data-testid="stAlert"], [data-testid="stExpander"], [role="tab"]),
+.stApp :is(.eyebrow, .muted, .sidebar-brand-subtitle, .sidebar-account-role) {
+    color: #fff !important;
+    -webkit-text-fill-color: #fff !important;
+}
+.stApp :is([data-testid="stCaptionContainer"], [data-testid="stMetricLabel"],
+           [data-testid="stMetricValue"], [data-testid="stAlert"], [role="tab"]) * {
+    color: #fff !important;
+    -webkit-text-fill-color: #fff !important;
+}
+.stApp [data-testid="stCode"], .stApp pre, .stApp code {
+    background: #04123a !important;
+    color: #fff !important;
+    -webkit-text-fill-color: #fff !important;
+}
+.stApp [data-testid="stCode"] * {
+    color: #fff !important;
+    -webkit-text-fill-color: #fff !important;
+}
+.stApp :is([data-testid="stTextInput"], [data-testid="stTextArea"],
+           [data-testid="stNumberInput"]) :is(input, textarea, button),
+.stApp .react-aria-ComboBox [role="group"],
+.stApp [data-baseweb="select"] > div {
+    background: #fff !important;
+    color: #000 !important;
+    -webkit-text-fill-color: #000 !important;
+}
+.stApp .react-aria-ComboBox *, .stApp [data-baseweb="select"] *,
+.stApp :is([data-testid="stTextInput"], [data-testid="stNumberInput"]) button * {
+    color: #000 !important;
+    -webkit-text-fill-color: #000 !important;
+}
+.stApp :is(input, textarea)::placeholder {
+    color: #000 !important;
+    -webkit-text-fill-color: #000 !important;
+    opacity: 1 !important;
+}
+[role="listbox"], [role="listbox"] [role="option"] {
+    background: #fff !important;
+}
+[role="listbox"], [role="listbox"] * {
+    color: #000 !important;
+    -webkit-text-fill-color: #000 !important;
+}
+[role="listbox"] [role="option"]:is(:hover, [data-focused="true"], [aria-selected="true"]) {
+    background: #e7eef8 !important;
+}
+.stApp [data-testid="stFormSubmitButton"] button[kind="secondary"],
+.stApp [data-testid="stFormSubmitButton"] button[kind="secondary"] *,
+.stApp .st-key-log_visibility_submit button * {
+    background: #fff !important;
+    color: #000 !important;
+    -webkit-text-fill-color: #000 !important;
+}
+/* Expander header bars stay light; force black titles so they read against the theme. */
+.stApp [data-testid="stExpander"] summary {
+    background: #fff !important;
+    color: #000 !important;
+    -webkit-text-fill-color: #000 !important;
+}
+.stApp [data-testid="stExpander"] summary * {
+    color: #000 !important;
+    -webkit-text-fill-color: #000 !important;
+}
+.stApp [data-testid="stExpander"] summary:hover {
+    background: #e7eef8 !important;
+}
+/* Expander content inherits the light theme's white background; darken it so white text reads. */
+.stApp [data-testid="stExpander"] details,
+.stApp [data-testid="stExpanderDetails"] {
+    background: rgba(4, 18, 58, .74) !important;
+}
 </style>""", unsafe_allow_html=True)
 
 
@@ -182,9 +309,12 @@ def authentication_page():
             password = st.text_input("密码", type="password", key="login_password")
             if st.form_submit_button("登录", type="primary", use_container_width=True):
                 user = api("POST", "/auth/login", json={"username": username, "password": password})
+                ticket = api("POST", "/auth/browser-ticket")["ticket"]
                 client = st.session_state.client
                 st.session_state.clear()
                 st.session_state.client, st.session_state.user = client, user
+                st.session_state.auth_restore_attempted = True
+                st.session_state.browser_cookie_pending = {"ticket": ticket, "id": uuid.uuid4().hex}
                 st.rerun()
         with sign_up, st.form("register"):
             name = st.text_input("用户名（3–40 个字符）")
@@ -203,6 +333,11 @@ def authentication_page():
 
 
 def problem_detail(problem):
+    with st.container(key="problem_statement"):
+        render_problem_statement(problem)
+
+
+def render_problem_statement(problem):
     st.subheader(problem["title"])
     tags = " · ".join(problem.get("tags", []))
     st.caption(f"{problem['id']}　 /　{problem.get('difficulty') or '未分级'}　 /　{problem['time_limit']:g} s　 /　{problem['memory_limit']} MB" + (f"　 /　{tags}" if tags else ""))
@@ -306,7 +441,7 @@ def problems_page():
         st.subheader("提交解答")
         languages = api("GET", "/languages/")["name"]
         with st.form("submit_" + pid):
-            language = st.selectbox("语言", languages)
+            language = st.selectbox("语言", languages, key="submission_language")
             code = st.text_area("代码", height=220, placeholder="在这里粘贴完整代码，从标准输入读取并输出答案。")
             st.caption("每分钟最多提交 3 次；每通过一个测试点得 10 分。")
             if st.form_submit_button("提交评测", type="primary"):
@@ -325,7 +460,7 @@ def submissions_page():
         a, b, c, d = st.columns([2, 2, 1, 1])
         pid = a.text_input("题目编号", placeholder="全部题目")
         uid = b.text_input("用户编号", value=user["user_id"], disabled=user["role"] != "admin")
-        status = c.selectbox("状态", ["全部", "pending", "success", "error"])
+        status = c.selectbox("状态", ["全部", "pending", "success", "error"], key="submission_status")
         page = d.number_input("页码", min_value=1, step=1)
         st.form_submit_button("查询", type="primary")
     params = {"page": page, "page_size": 15}
@@ -340,7 +475,7 @@ def submissions_page():
     st.dataframe(result["submissions"], hide_index=True, use_container_width=True)
     options = [r["submission_id"] for r in result["submissions"]]
     if options:
-        sid = st.selectbox("选择提交查看详情", options)
+        sid = st.selectbox("选择提交查看详情", options, key="submission_detail")
         submission_panel(sid)
     with st.expander("按编号查询公开日志"):
         sid = st.text_input("提交编号", key="public_sid")
@@ -407,7 +542,7 @@ def problem_management():
     with edit:
         problems = api("GET", "/problems/")
         if problems:
-            pid = st.selectbox("选择要编辑的题目", [p["id"] for p in problems], format_func=lambda x: next(p["id"] + " · " + p["title"] for p in problems if p["id"] == x))
+            pid = st.selectbox("选择要编辑的题目", [p["id"] for p in problems], key="edit_problem", format_func=lambda x: next(p["id"] + " · " + p["title"] for p in problems if p["id"] == x))
             problem = api("GET", f"/problems/{pid}")
             use_draft = st.checkbox("用 AI 草稿填充本题编辑器", disabled=not bool(st.session_state.get("ai_draft")))
             if use_draft:
@@ -418,7 +553,7 @@ def problem_management():
                 visibility = api("GET", f"/problems/{pid}/log_visibility")
                 with st.form("visibility_" + pid):
                     public = st.checkbox("向所有登录用户公开本题评测日志与测试点明细", value=visibility["public_cases"])
-                    if st.form_submit_button("更新日志可见性"):
+                    if st.form_submit_button("更新日志可见性", key="log_visibility_submit"):
                         api("PUT", f"/problems/{pid}/log_visibility", json={"public_cases": public})
                         st.success("日志可见性已更新。")
                 with st.expander("删除题目"):
@@ -454,6 +589,7 @@ def ai_panel(tid):
             st.rerun()
         state_label = {"pending": "等待中", "running": "处理中", "success": "已完成", "cancelled": "已中断", "error": "失败"}
         st.subheader(state_label[task["status"]])
+        st.caption("任务编号：" + tid)
         st.write(task["progress"])
         if active and st.button("中断任务", key="cancel_" + tid):
             api("PUT", f"/ai/problem-tasks/{tid}/cancel")
@@ -473,8 +609,14 @@ def ai_panel(tid):
             st.subheader(result["problem"]["title"])
             st.markdown(result["explanation"])
             with st.expander("测试覆盖与参考解答"):
-                st.write(result["coverage"])
-                st.code(result["reference_solution"], language="python")
+                st.markdown("\n".join(f"- {item}" for item in result["coverage"]))
+                st.code(result["reference_solution"], language=result.get("reference_language", "python"))
+            if result["validation"].get("independent_passed"):
+                with st.expander("输入校验与独立解答"):
+                    st.write(result["validation"]["verification_explanation"])
+                    st.caption(f"交叉核对后修正了 {result['validation']['corrected_outputs']} 处标准输出。")
+                    st.code(result["validation"]["input_validator"], language="python")
+                    st.code(result["validation"]["oracle_solution"], language="python")
             st.caption(result["validation"]["note"])
             if st.button("送入题目编辑器", type="primary", key="apply_" + tid):
                 st.session_state.ai_draft = result["problem"]
@@ -482,12 +624,29 @@ def ai_panel(tid):
                 go("题目管理")
         elif task["status"] == "error":
             st.error("本次未生成可保存的题目，请调整需求或模型配置后重试。")
+        if task["status"] in {"error", "cancelled"}:
+            st.caption("重新开始将沿用本次命题要求，使用当前已保存的模型配置创建新任务，并重新统计用量。")
+            if st.button("重新开始", type="primary", key="restart_" + tid):
+                previous = st.session_state.get("ai_requests", {}).get(tid, {})
+                with st.spinner("正在重新开始…"):
+                    result = api("POST", "/ai/problem-tasks/", json={
+                        "requirement": task["requirement"],
+                        "problem_id": task.get("problem_id", previous.get("problem_id")),
+                    })
+                st.session_state.ai_requests = {result["task_id"]: {
+                    "problem_id": task.get("problem_id", previous.get("problem_id"))}}
+                st.session_state.ai_task = result["task_id"]
+                st.session_state.ai_restart_notice = "已创建新的命题任务：" + result["task_id"]
+                st.session_state.poll_ai = True
+                st.rerun()
     except APIError as exc:
         st.error(str(exc))
 
 
 def ai_page():
     heading("AI 智能命题", "描述教学目标，生成题面与测试点，再送入编辑器审阅。")
+    if st.session_state.get("ai_restart_notice"):
+        st.success(st.session_state.ai_restart_notice)
     config = api("GET", "/ai/model-config") or {}
     with st.expander("模型配置", expanded=not bool(config)):
         with st.form("model_config"):
@@ -510,6 +669,7 @@ def ai_page():
         if st.form_submit_button("开始命题", type="primary"):
             result = api("POST", "/ai/problem-tasks/", json={"requirement": requirement, "problem_id": pid or None})
             st.session_state.ai_task = result["task_id"]
+            st.session_state.ai_requests = {result["task_id"]: {"problem_id": pid or None}}
             st.session_state.poll_ai = True
             st.rerun()
     if st.session_state.get("ai_task"):
@@ -565,6 +725,22 @@ def audit_page():
 
 
 def run_app():
+    sync_browser_cookie(api)
+    if not st.session_state.get("auth_restore_attempted"):
+        st.session_state.auth_restore_attempted = True
+        token = st.context.cookies.get("session_id")
+        if isinstance(token, str) and token:
+            base_url = os.getenv("OJ_API_URL", "http://127.0.0.1:8001")
+            st.session_state.client = httpx.Client(base_url=base_url, timeout=20, follow_redirects=True,
+                                                  trust_env=False, cookies={"session_id": token})
+            try:
+                st.session_state.user = api("GET", "/auth/me")
+            except APIError as exc:
+                if exc.code not in {401, 403}:
+                    st.session_state.auth_restore_attempted = False
+                    raise
+                st.session_state.client.cookies.clear()
+                st.session_state.browser_cookie_pending = {"ticket": None, "id": uuid.uuid4().hex}
     with st.sidebar:
         st.markdown('<div class="sidebar-brand"><div class="sidebar-mark">ZX</div><div><div class="sidebar-brand-name">知行 OJ</div><div class="sidebar-brand-subtitle">程序设计训练</div></div></div>', unsafe_allow_html=True)
         st.divider()
@@ -598,6 +774,8 @@ def run_app():
             api("POST", "/auth/logout")
             st.session_state.client.close()
             st.session_state.clear()
+            st.session_state.auth_restore_attempted = True
+            st.session_state.browser_cookie_pending = {"ticket": None, "id": uuid.uuid4().hex}
             st.rerun()
         st.caption("知行 OJ · 课程实验")
     pages[selected]()
@@ -611,4 +789,6 @@ except APIError as exc:
         if st.button("重新登录"):
             st.session_state.client.close()
             st.session_state.clear()
+            st.session_state.auth_restore_attempted = True
+            st.session_state.browser_cookie_pending = {"ticket": None, "id": uuid.uuid4().hex}
             st.rerun()

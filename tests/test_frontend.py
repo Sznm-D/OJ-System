@@ -40,6 +40,64 @@ def click(app, label):
     assert not app.exception, [exc.message for exc in app.exception]
 
 
+def test_refresh_restores_browser_session_and_logout_revokes_it(frontend_backend, monkeypatch):
+    import streamlit as st
+    root, url = frontend_backend
+    monkeypatch.setenv('OJ_API_URL', url)
+    with httpx.Client(base_url=url, trust_env=False) as browser:
+        browser.post('/api/auth/login', json={'username':'admin','password':'admintestpassword'}).raise_for_status()
+        cookie = browser.cookies.get('session_id')
+    monkeypatch.setattr(type(st.context), 'cookies', property(lambda self: {'session_id':cookie}))
+    first = AppTest.from_file(str(root / 'app.py'), default_timeout=20).run()
+    assert not first.exception and first.title[0].value == '题库'
+    # A fresh Streamlit session has no session_state from the previous page.
+    refreshed = AppTest.from_file(str(root / 'app.py'), default_timeout=20).run()
+    assert not refreshed.exception and refreshed.title[0].value == '题库'
+    click(refreshed, '退出登录')
+    after_logout = AppTest.from_file(str(root / 'app.py'), default_timeout=20).run()
+    assert not after_logout.exception and after_logout.title[0].value == '从一道题开始'
+
+
+@pytest.mark.parametrize("status", ["error", "cancelled"])
+def test_ai_restart_keeps_request_and_resumes_polling(frontend_backend, monkeypatch, status):
+    root, url = frontend_backend
+    monkeypatch.setenv("OJ_API_URL", url)
+    original_request = httpx.Client.request
+    started = []
+    task = {"status": status, "progress": "测试任务已结束", "events": [],
+            "requirement": "保留原知识点和难度", "problem_id": "P1001",
+            "usage": {"input_tokens": 10, "output_tokens": 20, "cost": 0,
+                      "currency": "USD", "basis": "测试用量", "price_unit": 1000,
+                      "input_price": 0, "output_price": 0}}
+
+    def request(client, method, path, **kwargs):
+        if str(path).startswith("/api/ai/"):
+            if method == "POST":
+                started.append(kwargs["json"])
+                data = {"task_id": "new-task", "status": "pending"}
+            elif str(path).endswith("model-config"):
+                data = None
+            else:
+                data = dict(task, status="running") if str(path).endswith("new-task") else task
+            return httpx.Response(200, json={"code": 200, "data": data})
+        return original_request(client, method, path, **kwargs)
+
+    monkeypatch.setattr(httpx.Client, "request", request)
+    app = AppTest.from_file(str(root / "app.py"), default_timeout=20).run()
+    app.text_input(key="login_name").set_value("admin")
+    app.text_input(key="login_password").set_value("admintestpassword")
+    click(app, "登录")
+    app.session_state.ai_task = "failed-task"
+    app.session_state.poll_ai = False
+    app.sidebar.radio(key="nav").set_value("AI 智能命题").run()
+    click(app, "重新开始")
+    assert started == [{"requirement": task["requirement"], "problem_id": "P1001"}]
+    assert app.session_state.ai_task == "new-task"
+    assert app.session_state.poll_ai
+    assert not any(button.label == "重新开始" for button in app.button)
+    assert any(button.label == "中断任务" for button in app.button)
+
+
 def test_frontend_admin_navigation_and_real_submission(frontend_backend, monkeypatch):
     root, url = frontend_backend
     monkeypatch.setenv("OJ_API_URL", url)
